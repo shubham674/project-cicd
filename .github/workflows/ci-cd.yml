@@ -3,10 +3,10 @@ name: CI/CD Pipeline
 on:
   push:
     branches:
-      - main
+      - git-eks
   pull_request:
     branches:
-      - main
+      - git-eks
 
 jobs:
   build:
