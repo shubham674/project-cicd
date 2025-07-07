@@ -10,42 +10,49 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
 
     steps:
-      # Checkout Code
+      # Checkout code
       - name: Checkout code
         uses: actions/checkout@v3
 
-      # Set up NodeJS 
+      # Set up NodeJS
       - name: Set up NodeJS
         uses: actions/setup-node@v3
         with:
           node-version: '14'
 
-      # Install NodeJS dependencies
+      # Install dependencies
       - name: Install NodeJS dependencies
         run: npm install
 
-      # SonarQube Analysis
-      - name: SonarCloud Scan
-        uses: SonarSource/sonarcloud-github-action@master
+      # SonarQube Analysis (Self-hosted)
+      - name: SonarQube Scan
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Needed to get PR information, if any
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      
-      # Docker Image Build
+        run: |
+          curl -sSLo sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
+          unzip sonar-scanner.zip
+          export PATH="$PWD/sonar-scanner-5.0.1.3006-linux/bin:$PATH"
+          sonar-scanner \
+            -Dsonar.projectKey=my-project \
+            -Dsonar.sources=. \
+            -Dsonar.host.url=https://sonarqube.satyaji.shop \
+            -Dsonar.login=$SONAR_TOKEN
+
+      # Docker Build
       - name: Build Docker Image
         run: |
-          docker build -t actions-app:${{ github.sha}} .
-          docker tag actions-app:${{ github.sha}} ${{ secrets.ECR_REPOSITORY_URI}}/actions-cicd:latest
-          docker tag actions-app:${{ github.sha}} ${{ secrets.DOCKERHUB_USERNAME }}/actions-cicd:latest
+          docker build -t actions-app:${{ github.sha }} .
+          docker tag actions-app:${{ github.sha }} ${{ secrets.ECR_REPOSITORY_URI }}/actions-cicd:latest
+          docker tag actions-app:${{ github.sha }} ${{ secrets.DOCKERHUB_USERNAME }}/actions-cicd:latest
 
-      # Trivy Scan
+      # Trivy Security Scan
       - name: Trivy Scan
-        run: docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image actions-app:${{ github.sha}}
-      
-      # Set up AWS Credentials
+        run: docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image actions-app:${{ github.sha }}
+
+      # Configure AWS credentials
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -53,22 +60,17 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      # Log in to Amazon ECR
-      - name: Log in to Amazon ECR
+      # Login to Amazon ECR
+      - name: Login to Amazon ECR
         run: |
           aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.ECR_REPOSITORY_URI }}
 
-      # Push image to Amazon ECR
+      # Push image to ECR
       - name: Push image to Amazon ECR
-        run: |
-          docker push ${{ secrets.ECR_REPOSITORY_URI}}/actions-cicd:latest
-        env:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
-  
-      # Log in to DockerHub
-      - name: Log in to DockerHub
+        run: docker push ${{ secrets.ECR_REPOSITORY_URI }}/actions-cicd:latest
+
+      # Login to DockerHub
+      - name: Login to DockerHub
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -76,10 +78,9 @@ jobs:
 
       # Push image to DockerHub
       - name: Push image to DockerHub
-        run: |
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/actions-cicd:latest
+        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/actions-cicd:latest
 
-      # Update Kubeconfig
+      # Update kubeconfig
       - name: Update kubeconfig
         run: aws eks --region ${{ secrets.AWS_REGION }} update-kubeconfig --name actions-eks-cluster
 
@@ -90,8 +91,8 @@ jobs:
           chmod +x ./kubectl
           sudo mv ./kubectl /usr/local/bin/kubectl
 
-      # Deploy to Amazon EKS
-      - name: Deploy to EKS
+      # Deploy to EKS
+      - name: Deploy to Amazon EKS
         run: |
           kubectl apply -f k8s-manifests/deployment.yaml
           kubectl apply -f k8s-manifests/service.yaml
